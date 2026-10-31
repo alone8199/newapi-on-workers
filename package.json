@@ -1,0 +1,25 @@
+{
+  "name": "newapi-on-workers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NewAPI rewritten for Cloudflare Workers (API gateway: OpenAI/Claude/Gemini/Responses protocols, management API, task endpoints, WebSocket Realtime).",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:init": "wrangler d1 execute NEWAPI_DB --local --file=src/storage/migrations.sql",
+    "db:init:remote": "wrangler d1 execute NEWAPI_DB --remote --file=src/storage/migrations.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240101.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0",
+    "wrangler": "^3.30.0"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  }
+}

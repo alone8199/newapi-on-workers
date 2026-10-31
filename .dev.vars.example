@@ -1,0 +1,11 @@
+# 复制为 .dev.vars（本地开发）或设置为生产 Secrets（wrangler secret put）
+# 渠道 key 静态加密主密钥（必填，用于 AES-GCM 加密 D1 中存储的渠道 key）
+MASTER_KEY=change-me-to-a-long-random-string
+
+# 可选：Bedrock 上游签名凭据
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+
+# 可选：Realtime WebSocket 上游与鉴权
+REALTIME_UPSTREAM=
+REALTIME_API_KEY=

@@ -1,0 +1,82 @@
+name = "newapi-on-workers"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# 生产域名（可选，绑定后取消注释）
+# routes = [{ pattern = "api.your-domain.com", custom_domain = true }]
+
+# ─────────────────────────────────────────────
+# 存储绑定（按架构文档第 5 节划分）
+# ─────────────────────────────────────────────
+
+# KV：系统 Options / 计费倍率 / Session / 缓存
+[[kv_namespaces]]
+binding = "NEWAPI_KV"
+id = "REPLACE_WITH_KV_ID"
+# preview 用独立命名空间，部署前创建
+preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+
+# D1：users/tokens/channels/logs/redemptions/groups/models/pricing/额度余额/任务状态（权威）
+[[d1_databases]]
+binding = "NEWAPI_DB"
+database_name = "newapi_db"
+database_id = "REPLACE_WITH_D1_ID"
+# 本地开发默认用本地 sqlite；远程用 database_id
+
+# ─────────────────────────────────────────────
+# Durable Objects：WebSocket Realtime 托管 + 额度扣减聚合器
+# ─────────────────────────────────────────────
+[[durable_objects.bindings]]
+name = "RELAY_DO"
+class_name = "RelayDurableObject"
+
+[[durable_objects.bindings]]
+name = "QUOTA_DO"
+class_name = "QuotaAggregatorDO"
+
+# DO 迁移声明（首次部署时需 migrations 段将 class 绑定到 script）
+[[migrations]]
+tag = "v1"
+new_classes = ["RelayDurableObject", "QuotaAggregatorDO"]
+
+# ─────────────────────────────────────────────
+# Queues：任务型端点（Midjourney/Suno/视频）异步状态轮询与回调
+# ─────────────────────────────────────────────
+[[queues.producers]]
+queue = "task-queue"
+binding = "TASK_QUEUE"
+
+[[queues.consumers]]
+queue = "task-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "task-dlq"
+
+[[queues.consumers]]
+queue = "task-dlq"
+max_batch_size = 10
+
+# ─────────────────────────────────────────────
+# Cron Triggers：清理过期 session、滚动归档日志、重试失败任务
+# ─────────────────────────────────────────────
+[triggers]
+crons = [
+  "*/15 * * * *",   # 每 15 分钟：清理过期 session、归档过期日志
+  "23 3 * * *"      # 每天 03:23：重试长期失败任务
+]
+
+# ─────────────────────────────────────────────
+# 前端静态托管（复用原版前端构建产物）
+# 未命中静态文件时 SPA fallback 到 index.html
+# ─────────────────────────────────────────────
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+# 环境变量（非敏感）
+[vars]
+ENVIRONMENT = "production"
+DEFAULT_QUOTA = "500000"
