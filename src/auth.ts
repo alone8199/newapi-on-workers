@@ -1,8 +1,7 @@
-// 双鉴权中间件：Bearer token（/v1 /pg） + Session cookie（/api）
-import { Env, db, kv } from './config';
-import { SessionStore } from './storage/session';
-import { hashKey } from './utils';
-import { errorResponse } from './utils';
+// 双鉴权中间件：Bearer(relay token) 用于 /v1 /pg；Bearer(access token) 或 refresh cookie 用于 /api
+import { Env, db } from './config';
+import { hashKey, verifyAccessToken, errorResponse, json } from './utils';
+import { sessionExists } from './auth_session';
 
 export interface AuthContext {
   userId: number;
@@ -10,7 +9,11 @@ export interface AuthContext {
   tokenId: number;
   groupId: string;
   unlimited: boolean;
+  sid?: string;
 }
+
+export const ROLE_ADMIN = 10;
+export const ROLE_ROOT = 100;
 
 /** 从请求提取 Bearer token */
 export function extractBearer(req: Request): string | null {
@@ -20,21 +23,7 @@ export function extractBearer(req: Request): string | null {
   return m ? m[1].trim() : null;
 }
 
-/** 从 Cookie 提取 session id */
-export function extractSessionId(req: Request): string | null {
-  const cookie = req.headers.get('cookie');
-  if (!cookie) return null;
-  for (const part of cookie.split(';')) {
-    const [k, v] = part.trim().split('=');
-    if (k === SessionStore.cookieName) return v;
-  }
-  return null;
-}
-
-/**
- * 鉴权主入口。
- * scope='api' 优先 Bearer 再 Session；scope='proxy' 仅 Bearer。
- */
+/** 鉴权主入口。scope='api' 用 access token(Bearer) 或 refresh cookie；scope='proxy' 仅 relay token。 */
 export async function authenticate(
   req: Request,
   env: Env,
@@ -43,75 +32,67 @@ export async function authenticate(
   if (scope === 'proxy') {
     const token = extractBearer(req);
     if (!token) return errorResponse('invalid api key', 401, 'authentication_error', 'invalid_api_key');
-    const ctx = await authByToken(token, env);
-    if (ctx instanceof Response) return ctx;
-    return ctx;
+    return authByRelayToken(token, env);
   }
-  // api：Bearer 优先，否则 Session
+  // api：Bearer access token 优先
   const bearer = extractBearer(req);
   if (bearer) {
-    const ctx = await authByToken(bearer, env);
-    if (!(ctx instanceof Response)) return ctx;
-  }
-  const sid = extractSessionId(req);
-  if (sid) {
-    const ss = new SessionStore(kv(env), db(env));
-    const s = await ss.get(sid);
-    if (s) {
-      return { userId: s.user_id, role: s.role, tokenId: 0, groupId: 'default', unlimited: s.role >= 10 };
+    const claims = await verifyAccessToken(bearer);
+    if (claims) {
+      const live = await sessionExists(env, claims.sid);
+      if (live) {
+        const user = await db(env).get<{ group: string }>(`SELECT "group" FROM users WHERE id = ? AND status = 1`, [claims.uid]);
+        if (user) {
+          return {
+            userId: claims.uid,
+            role: claims.role,
+            tokenId: 0,
+            groupId: user.group || 'default',
+            unlimited: false,
+            sid: claims.sid,
+          };
+        }
+      }
     }
   }
-  return errorResponse('未登录或登录已过期', 401, 'authentication_error', 'unauthorized');
+  // api 鉴权失败 → 200 信封（原版前端只认 success）
+  return json({ success: false, code: 'AUTH_TOKEN_INVALID', message: 'unauthorized' }, 200);
 }
 
-/** Bearer token 鉴权（带 KV 缓存 token→user 映射） */
-async function authByToken(token: string, env: Env): Promise<AuthContext | Response> {
+/** relay token（/v1 /pg）：sk- 前缀，查 tokens 表 */
+export async function authByRelayToken(token: string, env: Env): Promise<AuthContext | Response> {
   const hash = await hashKey(token);
-  const kvStore = kv(env);
-  let userId = await kvStore.getTokenUser(hash);
-  let tokenRow: any = null;
-  if (userId == null) {
-    tokenRow = await db(env).get<any>(
-      `SELECT id, user_id, status, remain_quota, unlimited_quota, expired_time FROM tokens WHERE key_hash = ?`,
-      [hash]
-    );
-    if (!tokenRow || tokenRow.status !== 1) {
-      return errorResponse('invalid api key', 401, 'authentication_error', 'invalid_api_key');
-    }
-    userId = Number(tokenRow.user_id);
-    await kvStore.putTokenUser(hash, userId);
-  } else {
-    tokenRow = await db(env).get<any>(
-      `SELECT id, user_id, status, remain_quota, unlimited_quota, expired_time FROM tokens WHERE key_hash = ?`,
-      [hash]
-    );
-  }
+  const tokenRow = await db(env).get<any>(
+    `SELECT id, user_id, status, remain_quota, unlimited_quota, expired_time FROM tokens WHERE key_hash = ?`,
+    [hash]
+  );
   if (!tokenRow || tokenRow.status !== 1) {
-    await kvStore.deleteTokenUser(hash);
     return errorResponse('invalid api key', 401, 'authentication_error', 'invalid_api_key');
   }
   const now = Math.floor(Date.now() / 1000);
-  if (tokenRow.expired_time && tokenRow.expired_time < now) {
+  if (tokenRow.expired_time && tokenRow.expired_time > 0 && tokenRow.expired_time < now) {
     return errorResponse('token 已过期', 401, 'authentication_error', 'expired');
   }
   const user = await db(env).get<any>(
-    `SELECT role, group_id, status, quota, used_quota FROM users WHERE id = ?`,
-    [Number(tokenRow.user_id)]
+    `SELECT role, "group", status FROM users WHERE id = ?`,
+    [tokenRow.user_id]
   );
   if (!user || user.status !== 1) {
     return errorResponse('用户已被禁用', 403, 'authentication_error', 'user_disabled');
   }
   return {
-    userId: Number(user.id ?? tokenRow.user_id),
-    role: Number(user.role),
-    tokenId: Number(tokenRow.id),
-    groupId: String(user.group_id || 'default'),
+    userId: tokenRow.user_id,
+    role: user.role,
+    tokenId: tokenRow.id,
+    groupId: user.group || 'default',
     unlimited: tokenRow.unlimited_quota === 1,
   };
 }
 
-/** 仅管理员可访问 */
-export function requireAdmin(ctx: AuthContext): Response | null {
-  if (ctx.role < 10) return errorResponse('需要管理员权限', 403, 'permission_error', 'forbidden');
+/** 管理员判定：role >= 10（对齐原版 IsAdmin：role >= RoleAdminUser(10)） */
+export function requireAdmin(auth: AuthContext): Response | null {
+  if (auth.role < ROLE_ADMIN) {
+    return json({ success: false, code: 'PERMISSION_DENIED', message: '无权访问该资源' }, 200);
+  }
   return null;
 }

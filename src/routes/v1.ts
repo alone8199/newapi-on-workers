@@ -38,7 +38,8 @@ export async function chatWithAuth(
   const preAmount = estimatePreQuota(clientBody);
 
   const pre = await preDeduct(env, auth.tokenId, auth.userId, preAmount, auth.unlimited);
-  if (!pre.ok) return errorResponse('额度不足', 402, 'quota_error', 'insufficient_quota');
+  // 原版额度不足返回 403（http.StatusForbidden）+ OpenAI 错误对象，非 402
+  if (!pre.ok) return errorResponse('额度不足', 403, 'insufficient_quota', 'insufficient_quota');
 
   const maxRetry = 3;
   let lastErr: Response | null = null;
@@ -189,7 +190,7 @@ export async function handleV1(req: Request, env: Env, url: URL): Promise<Respon
     const cached = await kv(env).getModelList(auth.groupId);
     if (cached) return json({ object: 'list', data: cached });
     const rows = await db(env).all<{ models: string }>(
-      `SELECT models FROM channels WHERE status=1 AND (group_id='' OR group_id=? OR group_id LIKE ?)`,
+      `SELECT models FROM channels WHERE status=1 AND ("group"='' OR "group"=? OR "group" LIKE ?)`,
       [auth.groupId, `%${auth.groupId}%`]
     );
     const set = new Set<string>();

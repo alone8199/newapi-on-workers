@@ -17,6 +17,6 @@
     "outDir": "dist",
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "do/**/*.ts", "queues/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*.ts", "do/**/*.ts", "queues/**/*.ts"],
+  "exclude": ["node_modules", "dist", "tests", "e2e", "compare-api.ts"]
 }

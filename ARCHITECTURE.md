@@ -130,7 +130,6 @@ KV 仅做**缓存与配置**，写入后主动失效对应 key。Key 规范：
 | `option:<key>` | 系统 Options 单条 | 3600s | 管理写 | 写 D1 同时 `kv.delete` |
 | `options:all` | 全量配置快照 | 3600s | 启动/管理写 | 同上 |
 | `pricing:all` | 模型倍率快照 | 86400s | 管理写 | 同上 |
-| `session:<id>` | 登录会话（含 user_id/role） | 2592000s (30d) | 登录 | 登出/过期删除 |
 | `token:user:<hash>` | token→user 映射缓存 | 600s | 鉴权热路径 | token 状态变更时删除 |
 | `channel:cache:<id>` | 渠道元数据缓存 | 300s | 路由热路径 | 渠道变更时删除 |
 | `model:list:<group>` | 某分组可用模型列表 | 300s | /v1/models | 渠道/模型变更时删除 |
@@ -242,20 +241,22 @@ UPDATE tokens SET remain_quota = remain_quota - ?
 
 ## 9. Session / Cookie 兼容性
 
-原版管理后台用 session cookie 登录。Worker 版：
+原版管理后台采用 **access token + refresh token** 登录会话（`QuantumNous/new-api` `service/auth_session.go`）。Worker 版 `auth_session.ts` 精确对齐：
 
 | 项 | 值（与原版一致） |
 |---|---|
-| cookie 名称 | `new-api-sessionid`（与原版 `sessionid`/`openai-session` 约定对齐，可在 `config.ts` 配置） |
-| path | `/` |
-| httpOnly | true |
-| sameSite | `Lax` |
-| secure | 生产环境 true |
-| 存储 | KV `session:<id>`，TTL 30d；登录写 D1 `sessions` 表也保留（双写便于审计） |
+| 登录返回 | `{success,message,data:{access_token,token_type:"Bearer",access_expires_at,session,user}}` |
+| access token | HMAC-SHA256 签名紧凑令牌（前端作 `Bearer` 回传，Worker 自签发自校验）；密钥 = `AUTH_SECRET` |
+| refresh cookie 名称 | `new_api_refresh` |
+| refresh cookie path | `/api/user/auth` |
+| refresh cookie httpOnly / sameSite / secure | true / `Strict` / https 下 true |
+| hint cookie | `new_api_has_session`（`Path=/`，非 httpOnly，值 `1`，前端冷启动探测登录态用） |
+| 会话存储 | D1 `user_sessions` 表（sid / user_id / auth_version / refresh_token_hash / 时间戳），TTL 30d |
 
 鉴权中间件 `auth.ts`：
-- `/v1/*`、`/pg/*`：验证 `Authorization: Bearer sk-...`（token 查 D1 `tokens`，缓存 KV `token:user:<hash>`）。
-- `/api/*`：优先 Bearer（API 调用），否则校验 Session cookie（读 KV `session:<id>`）。
+- `/v1/*`、`/pg/*`：验证 `Authorization: Bearer sk-...`（relay token 查 D1 `tokens`）。
+- `/api/*`：验证 `Authorization: Bearer <access_token>`（JWT 校验 + `user_sessions` 存活检查）；未带/失效返回 **HTTP 200 + `{success:false}`**（原版前端只认 success）。
+- `/api/user/auth/refresh`：用 refresh cookie 轮换 access token；`/api/user/auth/logout`：吊销会话并清双 cookie。
 
 ---
 

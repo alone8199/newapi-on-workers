@@ -5,3 +5,7 @@ dist/
 .env
 .dev.vars
 .DS_Store
+diffs/
+e2e-report/
+playwright-report/
+test-results/

@@ -1,6 +1,11 @@
 # 复制为 .dev.vars（本地开发）或设置为生产 Secrets（wrangler secret put）
-# 渠道 key 静态加密主密钥（必填，用于 AES-GCM 加密 D1 中存储的渠道 key）
-MASTER_KEY=change-me-to-a-long-random-string
+# access token 签名密钥（必填，HMAC-SHA256 签发/校验登录 access token）
+# 生产务必设置高强度随机串：wrangler secret put AUTH_SECRET
+AUTH_SECRET=change-me-to-a-long-random-string
+
+# 渠道 key 静态加密主密钥（可选；设置后 D1 中的渠道 key 用 AES-GCM 加密，读取时自动解密）
+# 若与 MASTER_KEY 未设置，渠道 key 以明文（换行分隔纯文本）存储，与原版一致
+MASTER_KEY=
 
 # 可选：Bedrock 上游签名凭据
 AWS_ACCESS_KEY_ID=

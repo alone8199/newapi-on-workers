@@ -8,18 +8,29 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "build": "wrangler deploy --dry-run --outdir=dist",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "npm run build && vitest run",
+    "test:unit": "vitest run tests/protocol.test.ts",
+    "test:contract": "npm run build && vitest run tests/contract.test.ts",
+    "compare": "tsx compare-api.ts",
+    "e2e": "playwright test",
     "db:init": "wrangler d1 execute NEWAPI_DB --local --file=src/storage/migrations.sql",
+    "db:seed": "wrangler d1 execute NEWAPI_DB --local --file=seed.sql",
     "db:init:remote": "wrangler d1 execute NEWAPI_DB --remote --file=src/storage/migrations.sql"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240101.0",
+    "@playwright/test": "^1.65.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20.19.43",
+    "tsx": "^4.23.15",
     "typescript": "^5.4.0",
     "vitest": "^1.4.0",
     "wrangler": "^3.30.0"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "zod": "^3.22.0"
   }
 }
